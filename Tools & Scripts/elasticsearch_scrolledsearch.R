@@ -1,5 +1,5 @@
 
-# function to conveniently retrieve more than 10.000 results from elastic search databases
+# function to conveniently retrieve more than 10.000 results from elastic search databases. outputs a neat dataframe
 
 
 full_scroll <- function(conn,  # connection to elastic
