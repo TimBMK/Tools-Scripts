@@ -14,7 +14,7 @@ full_scroll <- function(conn,  # connection to elastic
   require(elastic)
   require(data.table)
   
-  if (!is.null(limit) & limit < size) {size <- limit} # set size of the results per search to limit if needed, so no more than the limit are returned
+  if (!is.null(limit) && limit < size) {size <- limit} # set size of the results per search to limit if needed, so no more than the limit are returned
   
   # initial search, sets query
   res <- Search(conn, asdf = T, size = size, body = body, time_scroll = time_scroll)
