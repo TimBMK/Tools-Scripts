@@ -23,6 +23,7 @@ full_scroll <- function(conn,  # connection to elastic
   }
   
   if (!is.null(limit)){
+    if (limit > size) {size <- limit} # set size of the results per search to limit if needed, so no more than the limit are returned
     if (res$hits$total$value > limit) {    # if the limit is higher than the actual hits, use maximum hits as ceiling
       print(paste("Returning", limit, "out of", res$hits$total$value, "search results."))
       total <- limit 
