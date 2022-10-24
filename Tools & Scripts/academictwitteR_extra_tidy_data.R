@@ -14,10 +14,10 @@
 #' \itemize{
 #'    \item{"raw"}{List of data frames; Note: not all data frames are in Boyce-Codd 3rd Normal Form}
 #'    \item{"tidy"}{Tidy format; all essential columns are available}
-#'    \item{"tidy_2"}{Tidy format; additional variables (see vars) are available. Untruncates retweet text and adds indicators for retweets, quotes and replies. Automatically drops duplicated tweets. Handling of quoted tweets can be specified (see quoted_variables)}
+#'    \item{"tidy2"}{Tidy format; additional variables (see vars) are available. Untruncates retweet text and adds indicators for retweets, quotes and replies. Automatically drops duplicated tweets. Handling of quoted tweets can be specified (see quoted_variables)}
 #' }
 #' #' @param vars
-#' `r lifecycle::badge("experimental")` vector of strings, determining additional variables provided by the tidy_2 format. Can be any (or all) of the following:
+#' `r lifecycle::badge("experimental")` vector of strings, determining additional variables provided by the tidy2 format. Can be any (or all) of the following:
 #' \itemize{
 #'    \item{"hashtags"}{Hashtags contained in the tweet. Untrunctated for retweets}
 #'    \item{"ext_urls"}{Shortened and expanded URLs contained in the tweet, excluding those internal to Twitter (e.g. retweet URLs). Includes additional data provided by Twitter, such as the unwound URL, their title and description (if available). Untrunctated for retweets}
@@ -25,6 +25,10 @@
 #'    \item{"annotations"}{Annotations provided by Twitter, including their probability and type. Basically Named Entities. See }
 #'    \item{"context_annotations"}{Context annotations provided by Twitter, including additional data on their domains. See }
 #' }
+#' 
+#' #' @param quoted_variables
+#' `r lifecycle::badge("experimental")` Defines handling of entities for quotes. When TRUE, additional variables (see vars) are taken from the quoted tweet. When FALSE, variables are taken only from the tweet text added by the author. Defaults to FALSE
+#' 
 #' @return a data.frame containing either tweets or user information
 #' @export
 #'
@@ -96,7 +100,7 @@ ls_files <- function(data_path, pattern) {
 convert_json <- function(data_file, output_format = "tidy",
                          vars = c("hashtags", "ext_urls", "mentions", "annotations", "context_annotations"),
                          quoted_variables = F) {
-  if (!output_format %in% c("tidy", "raw", "tidy_2")) {
+  if (!output_format %in% c("tidy", "raw", "tidy2")) {
     stop("Unknown format.", call. = FALSE)
   }
   tweet_data <- .gen_raw(purrr::map_dfr(data_file, ~jsonlite::read_json(., simplifyVector = TRUE)))
@@ -144,7 +148,7 @@ convert_json <- function(data_file, output_format = "tidy",
     return(tibble::as_tibble(res))
   }
 
-  if (output_format == "tidy_2") {
+  if (output_format == "tidy2") {
     tweetmain <- raw[["tweet.main"]]
     usermain <- dplyr::distinct(raw[["user.main"]], .data$author_id, .keep_all = TRUE)  ## there are duplicates
     colnames(usermain) <- paste0("user_", colnames(usermain))
@@ -358,7 +362,7 @@ convert_json <- function(data_file, output_format = "tidy",
 }
 
 .flat <- function(data_path, output_format = "tidy", vars = c("hashtags", "ext_urls", "mentions", "annotations", "context_annotations"), quoted_variables = F) {
-  if (!output_format %in% c("tidy", "raw", "tidy_2")) {
+  if (!output_format %in% c("tidy", "raw", "tidy2")) {
     stop("Unknown format.", call. = FALSE)
   }
   data_files <- ls_files(data_path, "^data_")
@@ -466,7 +470,7 @@ convert_json <- function(data_file, output_format = "tidy",
 # test runs
 setwd("D:/academicCloud/EPINETZ/EPINetz-Team/Data/Seedlist_Publication/")
 
-data <- bind_tweets(data_path = "timelines", output_format = "tidy_2")
+data <- bind_tweets(data_path = "timelines", output_format = "tidy2")
 
 
 
@@ -477,30 +481,6 @@ data <- bind_tweets(data_path = "timelines", output_format = "tidy_2")
 
 
 # bind_tweets > .flat > ls_files, purrr::map_dfr(convert_json) > .gen_raw
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

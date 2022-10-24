@@ -2,17 +2,17 @@
 
 
 
-# add_query_prefix from academictwitteR (https://github.com/cjbarrie/academictwitteR/blob/master/R/utils.R)
-add_query_prefix <- function(x, prefix){
-  q <- paste0(prefix, x)
-  q <- paste(q, collapse = " OR ")
-  q <- paste0("(",q,")")
-  return(q)
-}
+# # add_query_prefix from academictwitteR (https://github.com/cjbarrie/academictwitteR/blob/master/R/utils.R)
+# add_query_prefix <- function(x, prefix){
+#   q <- paste0(prefix, x)
+#   q <- paste(q, collapse = " OR ")
+#   q <- paste0("(",q,")")
+#   return(q)
+# }
 
 
 
-query_splitter <- function(input, type = c("users", "conversations", "tweets"), batch, start_tweets, end_tweets, n, bind = F, data_path, bearer_token) {
+query_splitter <- function(input, type = c("users", "conversations", "tweets"), batch, batchsize = 1024, start_tweets, end_tweets, n = Inf, bind = F, data_path, bearer_token = get_bearer()) {
   
   require(academictwitteR)
   require(stringr)
@@ -29,18 +29,19 @@ query_splitter <- function(input, type = c("users", "conversations", "tweets"), 
     
     if (type == "users"){
       query <- build_query(users = str_trim(lookup)) # str_trim just in case
-      if(nchar(query) > 1024) {
+      if(nchar(query) > batchsize) {
         stop(paste("Query too long:", nchar(query), "characters. Adjust batch size."))
       }
     } 
-    
+
     if (type == "conversations"){
       query <- build_query(conversation_id = str_trim(lookup))
       
       # currently, academictwitteR's behaviour differs for covnersation_ids when building the query, hence the different evaluation. Might need fixing later (if changed)
+      # Note that this loop is only meant to emulate the query-build behaviour in academictwitteR and does not have any influence on the actual query
       full_query <- paste("(", paste(query, collapse = " OR "), 
                           ")", sep = "")
-      if(nchar(full_query) > 1024) {
+      if(nchar(full_query) > batchsize) {
         stop(paste("Query too long:", nchar(full_query), "characters. Adjust batch size."))
       }
     }
@@ -59,8 +60,6 @@ query_splitter <- function(input, type = c("users", "conversations", "tweets"), 
   }
   
   
-  output <- data.table()
-  
   # actual loop
   for (i in seq(1, length(data$input), batch)) {
     
@@ -77,14 +76,15 @@ query_splitter <- function(input, type = c("users", "conversations", "tweets"), 
       query <- build_query(conversation_id = str_trim(lookup))
     }
     
-    
+    try(
     get_all_tweets(query = query, start_tweets = start_tweets, 
                    end_tweets = end_tweets, n = n, 
                    data_path = data_path, bind_tweets = F,
                    bearer_token = bearer_token)
-    
+    )
   }
   
+  # binding (if asked for). Note that this binds all .jsons in the specified folder, not only the the output of the split query. This is only a convenience option!
   if (bind == T) {
     
     output <- bind_tweets(data_path = data_path, output_format = "tidy")
@@ -97,6 +97,23 @@ query_splitter <- function(input, type = c("users", "conversations", "tweets"), 
 
 
 
+
+# query <- ""
+# 
+# for (user in users$user_id) {
+#   while (nchar(query) +  nchar(paste0("from:", user, " OR ", "()")) < 1024) {
+#     
+#     if (nchar(query) > 0) {
+#       query <- paste(query, paste0("from:", user), sep = " OR ")
+#     } else {
+#       query <- paste0(query, paste0("from:", user))
+#     }
+#     
+#   }
+#   
+# }
+#
+# paste0("(", query, ")")
 
 
 
