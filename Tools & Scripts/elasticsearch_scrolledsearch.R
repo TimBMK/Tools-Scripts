@@ -6,7 +6,8 @@ full_scroll <- function(conn,  # connection to elastic
                         q = NULL, # Search query
                         body = list(),  # query body. set return values here
                         list_length = 100, # nr of result dataframes stored and bound simultaneously. Optimum depends on total size of data
-                        # set to NULL to deactivate (and bind everything in the end) 
+                        # (set to NULL to deactivate (and bind everything in the end))
+                        index = NULL,         # Search index
                         size = 10000,         # number of results per Search (result DF size). Balance with list_length. Maximum = 10.000
                         time_scroll = "1h",   # length of scroll id kept alive (see Search() documentation)
                         limit = NULL) {       # maximum number of results (NULL for unlimited/everything)
@@ -17,7 +18,7 @@ full_scroll <- function(conn,  # connection to elastic
   if (!is.null(limit) && limit < size) {size <- limit} # set size of the results per search to limit if needed, so no more than the limit are returned
   
   # initial search, sets query
-  res <- Search(conn, asdf = T, size = size, body = body, time_scroll = time_scroll)
+  res <- Search(conn, asdf = T, size = size, body = body, time_scroll = time_scroll, index = index)
   
   # limits
   if (is.null(limit)){        
@@ -103,3 +104,4 @@ full_scroll <- function(conn,  # connection to elastic
   
   return(out)
 }
+
