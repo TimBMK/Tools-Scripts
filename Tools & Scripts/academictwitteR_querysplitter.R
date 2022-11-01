@@ -12,7 +12,12 @@
 
 
 
-query_splitter <- function(input, type = c("users", "conversations", "tweets"), batch, batchsize = 1024, start_tweets, end_tweets, n = Inf, bind = F, data_path, bearer_token = get_bearer()) {
+query_splitter <- function(input, # input data, e.g. tweet or user IDs
+                           type = c("users", "conversations", "tweets"), # type of input data
+                           batch_size, # number of items in a batch. May take a bit of trial and error to determine (function checks if it's longer than max_batchlength). 
+                                       #    Set conservatively to avoid errors
+                           max_batchlength = 1024, # maximum batch size. Currently, this is 1024 characters for search request (API restriction)
+                           start_tweets, end_tweets, n = Inf, bind = F, data_path, bearer_token = get_bearer()) { # usual academitwitteR args
   
   require(academictwitteR)
   require(stringr)
