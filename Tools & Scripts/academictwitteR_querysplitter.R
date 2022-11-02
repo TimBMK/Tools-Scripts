@@ -28,13 +28,13 @@ query_splitter <- function(input, # input data, e.g. tweet or user IDs
   data <- data.frame(input = input, index = 1:length(input))
   
   # checkup loop (are the queries too long?)
-  for (i in seq(1, length(data$input), batch)) {
+  for (i in seq(1, length(data$input), batch_size)) {
     
-    lookup <- na.omit(data$input[i:(i+(batch-1))])
+    lookup <- na.omit(data$input[i:(i+(batch_size-1))])
     
     if (type == "users"){
       query <- build_query(users = str_trim(lookup)) # str_trim just in case
-      if(nchar(query) > batchsize) {
+      if(nchar(query) > max_batchlength) {
         stop(paste("Query too long:", nchar(query), "characters. Adjust batch size."))
       }
     } 
@@ -46,7 +46,7 @@ query_splitter <- function(input, # input data, e.g. tweet or user IDs
       # Note that this loop is only meant to emulate the query-build behaviour in academictwitteR and does not have any influence on the actual query
       full_query <- paste("(", paste(query, collapse = " OR "), 
                           ")", sep = "")
-      if(nchar(full_query) > batchsize) {
+      if(nchar(full_query) > max_batchlength) {
         stop(paste("Query too long:", nchar(full_query), "characters. Adjust batch size."))
       }
     }
@@ -66,13 +66,13 @@ query_splitter <- function(input, # input data, e.g. tweet or user IDs
   
   
   # actual loop
-  for (i in seq(1, length(data$input), batch)) {
+  for (i in seq(1, length(data$input), batch_size)) {
     
     # indicator
-    cat(paste("\nBatch", ceiling(i/batch), "/", ceiling(length(data$input)/batch), 
-              "\nInput row numbers", i, "to", (i+(batch-1)), "\n" ))
+    cat(paste("\nBatch", ceiling(i/batch_size), "/", ceiling(length(data$input)/batch_size), 
+              "\nInput row numbers", i, "to", (i+(batch_size-1)), "\n" ))
     
-    lookup <- na.omit(data$input[i:(i+(batch-1))])
+    lookup <- na.omit(data$input[i:(i+(batch_size-1))])
     
     if (type == "users"){
       query <- build_query(users = str_trim(lookup))} # str_trim just in case
