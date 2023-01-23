@@ -26,7 +26,7 @@ snapshots <- function(data,      # a data frame
   
   timeframes <-  split(as.data.table(data), by = time)
   
-  snapshot <-
+  snapshot <-             # function to be mapped over timeframes
     function(timeframe,
              vertex_a,
              vertex_b,
@@ -58,7 +58,7 @@ snapshots <- function(data,      # a data frame
       slice_dat <- tibble(node = V(slice)$name,
                           time = timeframe %>% distinct(!!as.name(time)) %>% pull()) # get time from the timeframe
       
-      try({ # try to avoid failure on empty slices 
+      try({ # try() to avoid failure on empty slices 
         
         if (community == TRUE) {
           communities <-
@@ -84,18 +84,20 @@ snapshots <- function(data,      # a data frame
     }
   
   
-  output <-
+  output <-                    # mapping the snapshot function over each timeframe
     timeframes %>% future_map(
       ~ snapshot(
         .x,
         vertex_a = vertex_a,
         vertex_b = vertex_b,
-        pmi_weight = pmi_weight,
         directed = directed,
+        pmi_weight = pmi_weight,
+        page_rank = page_rank,
         community = community,
         community_function = community_function,
-        page_rank = page_rank
-      ), .options = furrr_options(seed = seed) # to fix RNG issues in the parallelization
+        ...), 
+      .options = furrr_options(seed = seed), # to fix RNG issues in the parallelization
+      ... # the dots need to be noted twice to get into the inner function
     ) %>% bind_rows()
   
   return(output)
