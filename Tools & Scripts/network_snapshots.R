@@ -13,9 +13,9 @@ snapshots <- function(data,      # a data frame
                       pmi_weight = TRUE, # should the PMI be calculated for the slices and used as weights? if true make sure to specify vertex a and b correctly. Effectively projects a bipartite graph to monopartite
                       page_rank = TRUE, # should the pagerank for nodes in each snapshot be calculated?
                       community = TRUE, # should communities be calculated? if yes, specify a community function (default is Leiden)
-                      community_function = cluster_leiden, # provide the community detection function here
+                      community_function = cluster_leiden, # provide the community detection function here, as provided by the igraph package (other functions are untested!)
                       seed = NULL, # fixes RNG issues in parallelization. NULL only surpresses warnings!
-                      ...) { # ... to pass on arguments to algorithm
+                      ...) { # ... to pass on arguments to algorithm, e.g. objective_function or resolution_paramter for cluster_leiden
   
   require(tidyverse)
   require(igraph)
