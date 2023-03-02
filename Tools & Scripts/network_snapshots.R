@@ -13,6 +13,7 @@ snapshots <- function(data,      # a data frame
                       pmi_weight = TRUE, # should the PMI be calculated for the slices and used as weights? if true make sure to specify vertex a and b correctly. Effectively projects a bipartite graph to monopartite
                       output = c("metrics", "networks"), # should metrics for each snapshot or the networks itself be the output? page_rank and community only work for metrics. If pmi_weight = T, this outputs the pmi-weighted network for each snapshot as a dataframe
                       page_rank = TRUE, # should the pagerank for nodes in each snapshot be calculated? Only if output = "metrics"
+                      degree = FALSE,
                       community = TRUE, # should communities be calculated? if yes, specify a community function (default is Leiden). Only if output = "metrics
                       community_function = cluster_leiden, # provide the community detection function here, as provided by the igraph package (other functions are untested!). Only if output = "metrics
                       seed = NULL, # fixes RNG issues in parallelization. NULL only supresses warnings!
@@ -81,6 +82,16 @@ snapshots <- function(data,      # a data frame
               slice_dat %>% left_join(tibble(
                 node = V(slice)$name,
                 page_rank = page_rank$vector
+              ),
+              by = "node")
+          }
+          
+          if (degree == TRUE) {
+            degree <- degree(slice, mode = "total") # calculate degree
+            slice_dat <- 
+              slice_dat %>% left_join(tibble(
+                node = V(slice)$name,
+                degree = degree
               ),
               by = "node")
           }
