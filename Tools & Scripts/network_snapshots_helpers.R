@@ -4,6 +4,10 @@
 require(tidyverse)
 require(purrr)
 require(DescTools)
+require(tnet)
+require(tidytext)
+require(data.table)
+require(furrr)
 
 
 clusters_to_topics <- function(snapshots, clusters, statistics = TRUE) {
@@ -80,7 +84,7 @@ full_topic_overview <- function(topic_clusters, combined_NE, time_column,
   ### ! All overview statistics are valid for the topic, not the snapshot topic ! ###
 }
 
-get_top_terms <- function(topics_full, n = 20, # n sets the number of terms returned per topic;
+get_top_terms_simple <- function(topics_full, n = 20, # n sets the number of terms returned per topic;
                           page_rank = c("average", "global")){ #  page_rank sets type of page rank metric used for picking the n top terms: average over snapshots or global calculation. Default is average
   
   page_rank <- match.arg(page_rank)
@@ -107,6 +111,157 @@ get_top_terms <- function(topics_full, n = 20, # n sets the number of terms retu
   
   return(top_terms)
 }
+
+
+get_top_documents_simple <-
+  function(topics_full,    # topics_full made by full_topic_overview(). a doc_id variable and a topic variable is expected
+           full_documents, # dataframe with the full documents
+           join_variable = "doc_id", # this accepts all dplyr join "by = " arguments (incl. join_by())
+           n = 5,          # number of docs returned per topics
+           ties = F) {     # slice_max()'s with_ties operator
+    
+    top_documents <- topics_full %>%
+      group_by(doc_id) %>% mutate(relative_topic_occurence = doc_topic_occurrences /
+                                    sum(doc_topic_occurrences)) %>%
+      group_by(topic) %>% slice_max(relative_topic_occurence,
+                                    n = n,
+                                    with_ties = ties) %>%
+      left_join(full_documents,
+                by = join_variable) %>% 
+      ungroup()
+    
+  }
+
+
+
+get_topic_documents <- 
+  function(topics_counts,
+           topics_full, # usually the output of full_topic_overview. must include the topic and a "terms" column named identical to the one in the tokens object
+           tokens,
+           id = "doc_id", # ID of the documents. must be identical in full_documents, tokens and topic_count
+           terms = "lemma", # name of the node column
+           full_documents, # data containing the full texts of the documents and all desired output columns (e.g. header). document ID must be named as in the id variable
+           tf_idf_weight = TRUE,
+           n = 5, # number of top documents returned
+           method = "Newman") { # method for handling the weight calculation of the projection. See help(projecting_tm)
+    
+    id <- match.arg(id)
+    terms <- match.arg(terms)
+    method <- match.arg(method)
+    
+    topic_counts_list <-  split(as.data.table(topics_counts), by = "topic")
+    
+    
+    pagerank_documents <- function(topic_count, # this is the actual funtion to be wrapped in future_map below (for efficiency)
+                                   topics_full,
+                                   tokens,
+                                   id,
+                                   terms,
+                                   full_documents,
+                                   tf_idf_weight,
+                                   n,
+                                   method){
+      
+      topic_docs <- topic_count %>% filter(doc_topic_occurrences > 0)
+      
+      topic_terms <- topics_full %>% filter(topic == (distinct(topic_count, topic) %>% pull()))  %>% select({{terms}}, topic)
+      
+      # try(# wrapping it in try() so a failed network projection (e.g. when there are not enough connections) does not break the function
+      #   # This means that we do not necessarily get returns for all topics!
+      #   {
+          
+          if (topic_docs %>% distinct(!!as.name(id)) %>% nrow() > 1) { # make sure we have more than 1 document 
+            
+            topic_data <- tokens %>% 
+              filter(!!as.name(id) %in% (topic_docs %>% pull({{id}}))) %>% 
+              count(!!as.name(id), !!as.name(terms), sort = T) %>% 
+              group_by(!!as.name(terms)) %>% mutate(term_id = cur_group_id()) %>%  # integer IDs for lemmas and docs, as required by projecting_tm
+              group_by(!!as.name(id)) %>% mutate(temp_doc_id = cur_group_id()) %>% ungroup() # these are generated for docs in case they are not coercible to integer (e.g. char IDs)
+            
+            
+            if (tf_idf_weight == T) {
+              
+              topic_data <- topic_data %>% 
+                bind_tf_idf(term = !!as.name(terms), document = !!as.name(id), n = n) %>% 
+                filter(!!as.name(terms) %in% (topic_terms %>% pull({{terms}})))
+              
+              topic_graph_data <- 
+                projecting_tm(topic_data %>% 
+                                select(temp_doc_id, term_id, # order is important here: the first node is the one being projected, i.e. the resulting network
+                                       tf_idf), # the tf_idf serves as weight
+                              method = method) 
+              
+            } else {
+              
+              topic_data <- topic_data %>% 
+                filter(!!as.name(terms) %in% (topic_terms %>% pull({{terms}})))
+              
+              topic_graph_data <- 
+                projecting_tm(topic_data %>% 
+                                select(temp_doc_id, term_id), # order is important here: the first node is the one being projected, i.e. the resulting network
+                              method = method) 
+              
+            }
+            
+            topic_graph <- graph_from_data_frame(topic_graph_data %>% rename(weight = w))
+            
+            V(topic_graph)$page_rank <- page_rank(topic_graph)$vector
+            
+            top_documents <- tibble(temp_doc_id = as.integer(V(topic_graph)$name), 
+                                    page_rank = unlist(V(topic_graph)$page_rank)) %>% 
+              slice_max(page_rank, n = 5, with_ties = F) %>% 
+              mutate(topic = unique(topic_docs$topic)) %>% 
+              left_join(topic_data %>% distinct(!!as.name(id), temp_doc_id), by = "temp_doc_id", multiple = "all") %>% 
+              left_join(full_documents, by = join_by({{id}})) %>% 
+              select(!temp_doc_id)
+            
+            
+            
+          } else { # if we only have one document, return this with page_rank 1
+            
+            top_documents <- topic_docs %>% distinct(!!as.name(id)) %>% mutate(page_rank = 1,
+                                                                               topic = unique(topic_docs$topic)) %>% 
+              left_join(full_documents, by = join_by({{id}})) 
+          }
+          
+          return(top_documents)
+          
+        # },
+        # silent = T)
+    }
+    
+    possibly_pagerank_documents <- possibly(pagerank_documents, otherwise = NULL) # this is a better solution than try(), as it returns NULL rather than an error message
+    
+    output <- 
+      topic_counts_list %>% 
+      future_map(
+        possibly_pagerank_documents,
+        topics_full = topics_full, 
+        tokens = tokens,
+        id = id,
+        terms = terms,
+        full_documents = full_documents, 
+        tf_idf_weight = tf_idf_weight,
+        n = n, # number of top documents returned
+        method = method) %>% 
+      compact() %>% # this removes the empty entries (i.e. topics without any retrieved documents / errors) defined through possibly() above
+      bind_rows()
+    
+    cat("\n No documents returned for topics", paste(topics_counts %>% distinct(topic) %>% 
+          filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% 
+          pull(), collapse = ", "), "\n\n")
+
+    return(output)
+    
+  }
+
+# top_docs <- get_topic_documents(topics_counts = topics_counts,
+#                                 topics_full = topics_full,
+#                                 tokens = news_tokens,
+#                                 full_documents = news_data %>% rename(doc_id = ID, article_topic = topic) %>% select(doc_id, header, text, abstract))
+
+
+
 
 
 make_model_overview <- function(...,                # model objects go here
