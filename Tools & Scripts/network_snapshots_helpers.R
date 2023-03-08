@@ -8,6 +8,7 @@ require(tnet)
 require(tidytext)
 require(data.table)
 require(furrr)
+require(widyr)
 
 
 clusters_to_topics <- function(snapshots, clusters, statistics = TRUE) {
@@ -145,9 +146,6 @@ get_topic_documents <-
            n = 5, # number of top documents returned
            method = "Newman") { # method for handling the weight calculation of the projection. See help(projecting_tm)
     
-    id <- match.arg(id)
-    terms <- match.arg(terms)
-    method <- match.arg(method)
     
     topic_counts_list <-  split(as.data.table(topics_counts), by = "topic")
     
@@ -171,6 +169,8 @@ get_topic_documents <-
       #   {
           
           if (topic_docs %>% distinct(!!as.name(id)) %>% nrow() > 1) { # make sure we have more than 1 document 
+            
+            #### a second failsafe should be added here that returns documents by tf-idf rank if there is only 1 topic term
             
             topic_data <- tokens %>% 
               filter(!!as.name(id) %in% (topic_docs %>% pull({{id}}))) %>% 
@@ -203,13 +203,13 @@ get_topic_documents <-
               
             }
             
-            topic_graph <- graph_from_data_frame(topic_graph_data %>% rename(weight = w))
+            topic_graph <- graph_from_data_frame(topic_graph_data %>% rename(weight = w), directed = F)
             
             V(topic_graph)$page_rank <- page_rank(topic_graph)$vector
             
             top_documents <- tibble(temp_doc_id = as.integer(V(topic_graph)$name), 
                                     page_rank = unlist(V(topic_graph)$page_rank)) %>% 
-              slice_max(page_rank, n = 5, with_ties = F) %>% 
+              slice_max(page_rank, n = n, with_ties = F) %>% 
               mutate(topic = unique(topic_docs$topic)) %>% 
               left_join(topic_data %>% distinct(!!as.name(id), temp_doc_id), by = "temp_doc_id", multiple = "all") %>% 
               left_join(full_documents, by = join_by({{id}})) %>% 
@@ -247,9 +247,14 @@ get_topic_documents <-
       compact() %>% # this removes the empty entries (i.e. topics without any retrieved documents / errors) defined through possibly() above
       bind_rows()
     
-    cat("\n No documents returned for topics", paste(topics_counts %>% distinct(topic) %>% 
-          filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% 
-          pull(), collapse = ", "), "\n\n")
+    if (topics_counts %>% distinct(topic) %>% 
+        filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% nrow() > 0) {
+      
+      cat("\n No documents returned for topic(s)", paste(topics_counts %>% distinct(topic) %>% 
+                                                         filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% 
+                                                         pull(), collapse = ", "), "\n\n")
+      
+    }
 
     return(output)
     
@@ -260,6 +265,126 @@ get_topic_documents <-
 #                                 tokens = news_tokens,
 #                                 full_documents = news_data %>% rename(doc_id = ID, article_topic = topic) %>% select(doc_id, header, text, abstract))
 
+
+
+get_topic_terms <- 
+  function(topics_counts,
+           topics_full, # usually the output of full_topic_overview. must include the topic and a "terms" column named identical to the one in the tokens object
+           tokens, # a full tokens dataframe including information on doc_id and terms
+           id = "doc_id", # ID of the documents. must be identical in full_documents, tokens and topic_count
+           terms = "lemma", # name of the node column
+           n = 5, # number of top documents returned
+           method = "PMI") { # method for handling the weight calculation of the projection. Either PMI-weighted or a method from projecting_tm(), e.g. "Newman" (See help(projecting_tm)).
+    
+    id <- match.arg(id)
+    terms <- match.arg(terms)
+    method <- match.arg(method)
+    
+    topic_counts_list <-  split(as.data.table(topics_counts), by = "topic")
+    
+    
+    pagerank_terms<- function(topic_count, # this is the actual funtion to be wrapped in future_map below (for efficiency)
+                              topics_full,
+                              tokens,
+                              id,
+                              terms,
+                              n,
+                              method){
+      
+      topic_docs <- topic_count %>% filter(doc_topic_occurrences > 0)
+      
+      topic_terms <- topics_full %>% filter(topic == (distinct(topic_count, topic) %>% pull()))  %>% select({{terms}}, topic)
+      
+      if ((topic_docs %>% distinct(!!as.name(id)) %>% nrow() > 1) & 
+          (topic_terms %>% distinct(!!as.name(terms)) %>% nrow > 1)) { # make sure we have more than 1 term & more than 1 document
+        
+        
+        if (method == "PMI") {
+          
+          topic_data <- tokens %>% 
+            filter(!!as.name(id) %in% (topic_docs %>% pull({{id}})) &        # only documents associated with the topic
+                     !!as.name(terms) %in% (topic_terms %>% pull({{terms}}))) # only terms from the topics
+          
+          suppressWarnings({ # suppress warnings about deprecated matrix function in pmi calculation
+            topic_graph <-
+              topic_data %>%
+              select({{ id }}, {{ terms }}) %>%
+              pairwise_pmi_(feature =  {{id}}, item = {{terms}}, sort = F) %>% rename(weight = pmi) %>% # calculate PMI as weight (use pairwise_pmi_() avoid problems with column specification)
+              graph_from_data_frame(directed = F) # make igraph object for slice
+          })
+          
+        } else {
+          
+          topic_data <- tokens %>% 
+            filter(!!as.name(id) %in% (topic_docs %>% pull({{id}})) &
+                     !!as.name(terms) %in% (topic_terms %>% pull({{terms}}))) %>% 
+            count(!!as.name(id), !!as.name(terms), sort = T) %>% 
+            group_by(!!as.name(terms)) %>% mutate(term_id = cur_group_id()) %>%  # integer IDs for lemmas and docs, as required by projecting_tm
+            group_by(!!as.name(id)) %>% mutate(temp_doc_id = cur_group_id()) %>% ungroup() # these are generated for docs in case they are not coercible to integer (e.g. char IDs)
+          
+          # project the network with another method (e.g. "Newman")
+          topic_graph <- 
+            projecting_tm(topic_data %>% 
+                            select(term_id, temp_doc_id, # order is important here: the first node is the one being projected, i.e. the resulting network
+                                   n), # we weigh the network by the raw count of tokens in a document
+                          method = method) %>% 
+            rename(weight = w) %>% 
+            graph_from_data_frame(directed = F)
+          
+          V(topic_graph)$name <-        # replace term ID with actual term
+            tibble(term_id = V(topic_graph)$name %>% as.integer()) %>% 
+            left_join(topic_data %>% distinct(!!as.name(terms), term_id), by = "term_id", multiple = "all") %>% 
+            pull({{terms}})
+          
+        }
+        
+        V(topic_graph)$page_rank <- page_rank(topic_graph)$vector
+        
+        top_terms <- tibble({{terms}} := V(topic_graph)$name, 
+                            page_rank = unlist(V(topic_graph)$page_rank)) %>% 
+          slice_max(page_rank, n = n, with_ties = F) %>% 
+          mutate(topic = unique(topic_docs$topic)) 
+        
+        
+        
+      } else { # if we only have one document or one term, return terms with page_rank 1
+        
+        top_terms <- topic_terms %>% distinct(!!as.name(terms)) %>% mutate(page_rank = 1,
+                                                                           topic = unique(topic_docs$topic)) 
+      }
+      
+      return(top_terms)
+      
+    }
+    
+    possibly_pagerank_terms <- possibly(pagerank_terms, otherwise = NULL) # this is a better solution than try(), as it returns NULL rather than an error message
+    
+    output <- 
+      topic_counts_list %>% 
+      future_map(
+        possibly_pagerank_terms,
+        topics_full = topics_full, 
+        tokens = tokens,
+        id = id,
+        terms = terms,
+        n = n, # number of top documents returned
+        method = method) %>% 
+      compact() %>% # this removes the empty entries (i.e. topics without any retrieved documents / errors) defined through possibly() above
+      bind_rows()
+    
+    if (topics_counts %>% distinct(topic) %>% 
+         filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% nrow() > 0) {
+      
+      cat("\n No terms returned for topics", paste(topics_counts %>% distinct(topic) %>% 
+                                                     filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% 
+                                                     pull(), collapse = ", "), "\n\n")
+      
+    }
+
+    
+    return(output)
+    
+  }
 
 
 
