@@ -142,13 +142,14 @@ get_topic_documents <-
            id = "doc_id", # ID of the documents. must be identical in full_documents, tokens and topic_count
            terms = "lemma", # name of the node column
            full_documents, # data containing the full texts of the documents and all desired output columns (e.g. header). document ID must be named as in the id variable
-           tf_idf_weight = TRUE,
+           tf_idf_weight = TRUE, # should the projection of the term-document-network weighted by the tf-idf of the terms to weigh documents more highly where the topic terms are central?
            n = 5, # number of top documents returned
-           method = "Newman") { # method for handling the weight calculation of the projection. See help(projecting_tm)
+           method = "Newman") { # method for handling the weight calculation of the projection. See help(projecting_tm). "Newman" may not produce documents for topics with few documents (throws error in tapply)
     
     
     topic_counts_list <-  split(as.data.table(topics_counts), by = "topic")
     
+    full_documents <- full_documents %>% mutate({{id}} := as.character(!!as.name(id))) # make sure document IDs are characters
     
     pagerank_documents <- function(topic_count, # this is the actual funtion to be wrapped in future_map below (for efficiency)
                                    topics_full,
@@ -160,25 +161,21 @@ get_topic_documents <-
                                    n,
                                    method){
       
-      topic_docs <- topic_count %>% filter(doc_topic_occurrences > 0)
+      topic_docs <- topic_count %>% filter(doc_topic_occurrences > 0) %>% mutate({{id}} := as.character(!!as.name(id)))
       
       topic_terms <- topics_full %>% filter(topic == (distinct(topic_count, topic) %>% pull()))  %>% select({{terms}}, topic)
-      
-      # try(# wrapping it in try() so a failed network projection (e.g. when there are not enough connections) does not break the function
-      #   # This means that we do not necessarily get returns for all topics!
-      #   {
           
-          if (topic_docs %>% distinct(!!as.name(id)) %>% nrow() > 1) { # make sure we have more than 1 document 
+      topic_data <- tokens %>% 
+        filter(!!as.name(id) %in% (topic_docs %>% pull({{id}}))) %>% 
+        count(!!as.name(id), !!as.name(terms), sort = T) %>% 
+        group_by(!!as.name(terms)) %>% mutate(term_id = cur_group_id()) %>%  # integer IDs for lemmas and docs, as required by projecting_tm
+        group_by(!!as.name(id)) %>% mutate(temp_doc_id = cur_group_id()) %>% ungroup() # these are generated for docs in case they are not coercible to integer (e.g. char IDs)
+      
+      
+          if ((topic_docs %>% distinct(!!as.name(id)) %>% nrow() > 1) &
+              (topic_terms %>% distinct(!!as.name(terms)) %>% nrow() > 1)) { # make sure we have more than 1 document & more than 1 term
             
-            #### a second failsafe should be added here that returns documents by tf-idf rank if there is only 1 topic term
-            
-            topic_data <- tokens %>% 
-              filter(!!as.name(id) %in% (topic_docs %>% pull({{id}}))) %>% 
-              count(!!as.name(id), !!as.name(terms), sort = T) %>% 
-              group_by(!!as.name(terms)) %>% mutate(term_id = cur_group_id()) %>%  # integer IDs for lemmas and docs, as required by projecting_tm
-              group_by(!!as.name(id)) %>% mutate(temp_doc_id = cur_group_id()) %>% ungroup() # these are generated for docs in case they are not coercible to integer (e.g. char IDs)
-            
-            
+
             if (tf_idf_weight == T) {
               
               topic_data <- topic_data %>% 
@@ -217,17 +214,38 @@ get_topic_documents <-
             
             
             
-          } else { # if we only have one document, return this with page_rank 1
+          } 
+      
+      if (topic_docs %>% distinct(!!as.name(id)) %>% nrow() == 1) { # if we only have one document, return this with page_rank 1
             
-            top_documents <- topic_docs %>% distinct(!!as.name(id)) %>% mutate(page_rank = 1,
-                                                                               topic = unique(topic_docs$topic)) %>% 
+        # cat(paste0("\n Only one Document for Topic ", distinct(topic_count, topic) %>% pull(), ". Page Rank is set to 1 for this Document.\n"))
+        
+            top_documents <- topic_docs %>% distinct(!!as.name(id)) %>% 
+              mutate(page_rank = 1,
+                     topic = unique(topic_docs$topic)) %>% 
               left_join(full_documents, by = join_by({{id}})) 
-          }
+      }
+      
+      if (topic_terms %>% distinct(!!as.name(terms)) %>% nrow() == 1) { # if we only have one term, return documents with the highest tf-idfs
+        
+        cat(paste0("\n Only one Term in Topic ", distinct(topic_count, topic) %>% pull(), ". Returning Document Term Frequency instead of Page Rank.\n"))
+        # as we only have one term, and all documents in the topic sample contain this term, the IDF, and therefore the TF-IDF would always be zero. 
+        #   Therefore, a TF-IDF-weighted Page Rank would return no documents (the edge weight being 0 in all cases), and an unweighted Page Rank would return the same rank for all documents in which the term occurs
+        
+        topic_data <- topic_data %>% 
+          bind_tf_idf(term = !!as.name(terms), document = !!as.name(id), n = n) %>% 
+          filter(!!as.name(terms) %in% (topic_terms %>% pull({{terms}})))
+        
+        top_documents <- topic_data %>% 
+          slice_max(tf, n = n, with_ties = F) %>% 
+          mutate(topic = unique(topic_docs$topic)) %>%
+          left_join(full_documents, by = join_by({{id}})) %>% 
+          select(tf, topic, doc_id, header, text, abstract, outlet)
+        
+      }
           
           return(top_documents)
-          
-        # },
-        # silent = T)
+
     }
     
     possibly_pagerank_documents <- possibly(pagerank_documents, otherwise = NULL) # this is a better solution than try(), as it returns NULL rather than an error message
@@ -250,7 +268,7 @@ get_topic_documents <-
     if (topics_counts %>% distinct(topic) %>% 
         filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% nrow() > 0) {
       
-      cat("\n No documents returned for topic(s)", paste(topics_counts %>% distinct(topic) %>% 
+      cat("\n No Documents returned for Topic(s)", paste(topics_counts %>% distinct(topic) %>% 
                                                          filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% 
                                                          pull(), collapse = ", "), "\n\n")
       
