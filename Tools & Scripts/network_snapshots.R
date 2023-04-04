@@ -9,10 +9,12 @@ snapshots <- function(data,      # a data frame
                       vertex_a,  # first vertex. if pmi is calculated as weight, this is used as the feature column
                       vertex_b,  # second vertex. if pmi is caclulated as weight, this is used as the item column
                       time,      # time indicator to slice into. correct time slices need to be provided in the data frame (e.g. day, week, month...), is used as-is
-                      directed = FALSE, # should the graph passed to the community detection be directed? If TRUE, then vertex_a -> vertex_b
+                      directed = FALSE, # should the graph passed to the community detection be directed? If TRUE, then vertex_a -> vertex_b. Always undirected if PMI weighted
                       pmi_weight = TRUE, # should the PMI be calculated for the slices and used as weights? if true make sure to specify vertex a and b correctly. Effectively projects a bipartite graph to monopartite
                       output = c("metrics", "networks"), # should metrics for each snapshot or the networks itself be the output? page_rank and community only work for metrics. If pmi_weight = T, this outputs the pmi-weighted network for each snapshot as a dataframe
                       page_rank = TRUE, # should the pagerank for nodes in each snapshot be calculated? Only if output = "metrics"
+                      negative_pagerank_weights = TRUE, # Should negative weights be used for the pagerank calculation? If FALSE, negative weights are normalized to 0
+                      degree = FALSE,
                       community = TRUE, # should communities be calculated? if yes, specify a community function (default is Leiden). Only if output = "metrics
                       community_function = cluster_leiden, # provide the community detection function here, as provided by the igraph package (other functions are untested!). Only if output = "metrics
                       seed = NULL, # fixes RNG issues in parallelization. NULL only supresses warnings!
@@ -46,7 +48,7 @@ snapshots <- function(data,      # a data frame
             timeframe %>%
             select({{ vertex_a }}, {{ vertex_b }}) %>%
             pairwise_pmi_(feature =  {{vertex_a}}, item = {{vertex_b}}, sort = F) %>% rename(weight = pmi) %>% # calculate PMI as weight (use pairwise_pmi_() avoid problems with column specification)
-            graph_from_data_frame(directed = directed) # make igraph object for slice
+            graph_from_data_frame(directed = F) # make igraph object for slice
         })
         
       } else {
@@ -76,13 +78,34 @@ snapshots <- function(data,      # a data frame
           }
           
           if (page_rank == TRUE) {
-            page_rank <- page_rank(slice)# calculate page rank
+            
+            if (negative_pagerank_weights == FALSE) {
+              slice_pagerank <- subgraph.edges(slice, which(E(slice)$weight > 0)) 
+              page_rank <- page_rank(slice_pagerank)
+            } else {
+              page_rank <- page_rank(slice) # calculate page rank on negative weights
+            }
+            
             slice_dat <-
               slice_dat %>% left_join(tibble(
                 node = V(slice)$name,
                 page_rank = page_rank$vector
               ),
-              by = "node")
+              by = "node") %>% 
+              replace_na(list(page_rank = 0))
+            
+          }
+          
+          if (degree == TRUE) {
+            slice_degree <- subgraph.edges(slice, which(E(slice)$weight > 0)) # Normalize weight by removing edges with negative weights
+            degree <- degree(slice_degree, mode = "total") # calculate degree
+            slice_dat <- 
+              slice_dat %>% left_join(tibble(
+                node = V(slice_degree)$name,
+                degree = degree
+              ),
+              by = "node") %>% 
+              replace_na(list(degree = 0))
           }
           
         })
