@@ -16,11 +16,12 @@ snapshots <- function(data,      # a data frame
                       negative_pagerank_weights = TRUE, # Should negative weights be used for the pagerank calculation? If FALSE, negative weights are normalized to 0
                       degree = FALSE,
                       community = TRUE, # should communities be calculated? if yes, specify a community function (default is Leiden). Only if output = "metrics
-                      community_function = cluster_leiden, # provide the community detection function here, as provided by the igraph package (other functions are untested!). Only if output = "metrics
+                      community_function = igraph::cluster_leiden, # provide the community detection function here, as provided by the igraph package (other functions are untested!). Only if output = "metrics
                       seed = NULL, # fixes RNG issues in parallelization. NULL only supresses warnings!
                       ...) { # ... to pass on arguments to algorithm, e.g. objective_function or resolution_paramter for cluster_leiden
   
-  require(tidyverse)
+  require(dplyr)
+  require(tidyr)
   require(igraph)
   require(data.table)
   require(furrr)
@@ -29,7 +30,7 @@ snapshots <- function(data,      # a data frame
   output <- match.arg(output)
   
   
-  timeframes <-  split(as.data.table(data), by = time)
+  timeframes <-  split(data.table::as.data.table(data), by = time)
   
   snapshot <-             # function to be mapped over timeframes
     function(timeframe,
@@ -46,22 +47,24 @@ snapshots <- function(data,      # a data frame
         suppressWarnings({ # suppress warnings about deprecated matrix function in pmi calculation
           slice <-
             timeframe %>%
-            select({{ vertex_a }}, {{ vertex_b }}) %>%
-            pairwise_pmi_(feature =  {{vertex_a}}, item = {{vertex_b}}, sort = F) %>% rename(weight = pmi) %>% # calculate PMI as weight (use pairwise_pmi_() avoid problems with column specification)
-            graph_from_data_frame(directed = F) # make igraph object for slice
+            dplyr::select({{ vertex_a }}, {{ vertex_b }}) %>%
+            widyr::pairwise_pmi_(feature =  {{vertex_a}}, item = {{vertex_b}}, sort = F) %>% dplyr::rename(weight = pmi) %>% # calculate PMI as weight (use pairwise_pmi_() avoid problems with column specification)
+            igraph::graph_from_data_frame(directed = F) # make igraph object for slice
         })
         
       } else {
         # unweighted if not pmi-weighted
         slice <-
-          timeframe %>% as_tibble() %>%
-          select({{ vertex_a }}, {{ vertex_b }}) %>%
-          graph_from_data_frame(directed = directed) # make igraph object for slice
+          timeframe %>% dplyr::as_tibble() %>%
+          dplyr::select({{ vertex_a }}, {{ vertex_b }}) %>%
+          igraph::graph_from_data_frame(directed = directed) # make igraph object for slice
       }
       
       if (output == "metrics") {
-        slice_dat <- tibble(node = V(slice)$name,
-                            time = timeframe %>% distinct(!!as.name(time)) %>% pull()) # get time from the timeframe
+        slice_dat <- dplyr::tibble(node = V(slice)$name,
+                                  time = timeframe %>% 
+                                    dplyr::distinct(!!as.name(time)) %>% 
+                                    dplyr::pull()) # get time from the timeframe
         
         try({
           # try() to avoid failure on empty slices
@@ -70,7 +73,7 @@ snapshots <- function(data,      # a data frame
             communities <-
               community_function(slice, ...) # calculate communities
             slice_dat <-
-              slice_dat %>% left_join(tibble(
+              slice_dat %>% dplyr::left_join(tibble(
                 node = V(slice)$name,
                 community = communities$membership
               ),
@@ -80,32 +83,34 @@ snapshots <- function(data,      # a data frame
           if (page_rank == TRUE) {
             
             if (negative_pagerank_weights == FALSE) {
-              slice_pagerank <- subgraph.edges(slice, which(E(slice)$weight > 0)) 
-              page_rank <- page_rank(slice_pagerank)
+              slice_pagerank <- igraph::subgraph.edges(slice, which(E(slice)$weight > 0)) 
+              page_rank <- igraph::page_rank(slice_pagerank)
             } else {
-              page_rank <- page_rank(slice) # calculate page rank on negative weights
+              page_rank <- igraph::page_rank(slice) # calculate page rank on negative weights
             }
             
             slice_dat <-
-              slice_dat %>% left_join(tibble(
-                node = V(slice)$name,
-                page_rank = page_rank$vector
-              ),
-              by = "node") %>% 
-              replace_na(list(page_rank = 0))
+              slice_dat %>% dplyr::left_join(
+                dplyr::tibble(
+                  node = V(slice)$name,
+                  page_rank = page_rank$vector
+                ),
+                by = "node") %>% 
+              tidyr::replace_na(list(page_rank = 0))
             
           }
           
           if (degree == TRUE) {
-            slice_degree <- subgraph.edges(slice, which(E(slice)$weight > 0)) # Normalize weight by removing edges with negative weights
-            degree <- degree(slice_degree, mode = "total") # calculate degree
+            slice_degree <- igraph::subgraph.edges(slice, which(E(slice)$weight > 0)) # Normalize weight by removing edges with negative weights
+            degree <- igraph::degree(slice_degree, mode = "total") # calculate degree
             slice_dat <- 
-              slice_dat %>% left_join(tibble(
-                node = V(slice_degree)$name,
-                degree = degree
-              ),
-              by = "node") %>% 
-              replace_na(list(degree = 0))
+              slice_dat %>% dplyr::left_join(
+                dplyr::tibble(
+                  node = V(slice_degree)$name,
+                  degree = degree
+                ),
+                by = "node") %>% 
+              tidyr::replace_na(list(degree = 0))
           }
           
         })
@@ -113,8 +118,10 @@ snapshots <- function(data,      # a data frame
       }
       
       if (output == "networks") {
-        slice_dat <- as_data_frame(slice, what = "edges") %>%
-          mutate(time = timeframe %>% distinct(!!as.name(time)) %>% pull())
+        slice_dat <- igraph::as_data_frame(slice, what = "edges") %>%
+          dplyr::mutate(time = timeframe %>% 
+                          dplyr::distinct(!!as.name(time)) %>% 
+                          dplyr::pull())
         
       }
       
@@ -124,18 +131,18 @@ snapshots <- function(data,      # a data frame
 
   
   output <-                    # mapping the snapshot function over each timeframe
-    future_map(
-       timeframes,
-        function(x, ...)
-          snapshot(x,
-            vertex_a = vertex_a,
-            vertex_b = vertex_b,
-            directed = directed,
-            pmi_weight = pmi_weight,
-            page_rank = page_rank,
-            community = community,
-            community_function = community_function,
-            ...),
+    furrr::future_map(
+      timeframes,
+      function(x, ...)
+        snapshot(x,
+                 vertex_a = vertex_a,
+                 vertex_b = vertex_b,
+                 directed = directed,
+                 pmi_weight = pmi_weight,
+                 page_rank = page_rank,
+                 community = community,
+                 community_function = community_function,
+                 ...),
       .options = furrr_options(seed = seed), # to fix RNG issues in the parallelization
       ... # triple dot construct with anonymous function to pass ... properly
     ) %>% bind_rows()
