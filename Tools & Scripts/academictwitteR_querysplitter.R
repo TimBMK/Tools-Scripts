@@ -77,7 +77,8 @@ query_splitter <- function(input, # input data, e.g. tweet or user IDs
     lookup <- na.omit(data$input[i:(i+(batch_size-1))])
     
     if (type == "users"){
-      query <- build_query(users = str_trim(lookup))} # str_trim just in case
+      query <- build_query(users = str_trim(lookup), # str_trim just in case
+                           is_retweet = is_retweet, is_reply = is_reply, is_quote = is_quote, is_verified = is_verified)} # addtional query terms
     
     if (type == "conversations"){
       query <- build_query(conversation_id = str_trim(lookup))
