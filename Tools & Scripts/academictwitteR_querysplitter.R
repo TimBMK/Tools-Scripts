@@ -13,6 +13,7 @@
 
 
 query_splitter <- function(input, # input data, e.g. tweet or user IDs
+                           is_retweet = NULL, is_reply = NULL, is_quote = NULL, is_verified = NULL, # additional parameters to be passed on if type = "users"
                            type = c("users", "conversations", "tweets"), # type of input data
                            batch_size, # number of items in a batch. May take a bit of trial and error to determine (function checks if it's longer than max_batchlength). 
                                        #    Set conservatively to avoid errors
@@ -33,7 +34,8 @@ query_splitter <- function(input, # input data, e.g. tweet or user IDs
     lookup <- na.omit(data$input[i:(i+(batch_size-1))])
     
     if (type == "users"){
-      query <- build_query(users = str_trim(lookup)) # str_trim just in case
+      query <- build_query(users = str_trim(lookup), # str_trim just in case
+                           is_retweet = is_retweet, is_reply = is_reply, is_quote = is_quote, is_verified = is_verified) # addtional query terms
       if(nchar(query) > max_batchlength) {
         stop(paste("Query too long:", nchar(query), "characters. Adjust batch size."))
       }
@@ -75,7 +77,8 @@ query_splitter <- function(input, # input data, e.g. tweet or user IDs
     lookup <- na.omit(data$input[i:(i+(batch_size-1))])
     
     if (type == "users"){
-      query <- build_query(users = str_trim(lookup))} # str_trim just in case
+      query <- build_query(users = str_trim(lookup), # str_trim just in case
+                           is_retweet = is_retweet, is_reply = is_reply, is_quote = is_quote, is_verified = is_verified)} # addtional query terms
     
     if (type == "conversations"){
       query <- build_query(conversation_id = str_trim(lookup))

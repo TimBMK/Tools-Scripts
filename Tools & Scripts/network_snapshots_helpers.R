@@ -176,7 +176,7 @@ get_topic_documents <-
           if ((topic_docs %>% dplyr::distinct(!!as.name(id)) %>% nrow() > 1) &
               (topic_terms %>% dplyr::distinct(!!as.name(terms)) %>% nrow() > 1)) { # make sure we have more than 1 document & more than 1 term
             
-            
+
             if (tf_idf_weight == T) {
               
               topic_data <- topic_data %>% 
@@ -203,7 +203,7 @@ get_topic_documents <-
             
             topic_graph <- igraph::graph_from_data_frame(topic_graph_data %>% dplyr::rename(weight = w), directed = F)
             
-            V(topic_graph)$page_rank <- igraph::page_rank(topic_graph)$vector
+            igraph::V(topic_graph)$page_rank <- igraph::page_rank(topic_graph)$vector
             
             top_documents <- dplyr::tibble(temp_doc_id = as.integer(V(topic_graph)$name), 
                                            page_rank = unlist(V(topic_graph)$page_rank)) %>% 
@@ -230,6 +230,7 @@ get_topic_documents <-
       if (topic_terms %>% dplyr::distinct(!!as.name(terms)) %>% nrow() == 1) { # if we only have one term, return documents with the highest tf-idfs
         
         cat(paste0("\n Only one Term in Topic ", dplyr::distinct(topic_count, topic) %>% dplyr::pull(), ". Returning Document Term Frequency instead of Page Rank.\n"))
+
         # as we only have one term, and all documents in the topic sample contain this term, the IDF, and therefore the TF-IDF would always be zero. 
         #   Therefore, a TF-IDF-weighted Page Rank would return no documents (the edge weight being 0 in all cases), and an unweighted Page Rank would return the same rank for all documents in which the term occurs
         
@@ -274,7 +275,6 @@ get_topic_documents <-
                                                                                          dplyr::distinct(topic) %>% 
                                                                                          dplyr::pull()))) %>% 
                                                            dplyr::pull(), collapse = ", "), "\n\n")
-      
     }
 
     return(output)
@@ -301,7 +301,7 @@ get_topic_terms <-
     terms <- match.arg(terms)
     method <- match.arg(method)
     
-    topic_counts_list <-  split(as.data.table(topics_counts), by = "topic")
+    topic_counts_list <-  split(data.table::as.data.table(topics_counts), by = "topic")
     
     
     pagerank_terms<- function(topic_count, # this is the actual funtion to be wrapped in future_map below (for efficiency)
@@ -312,77 +312,83 @@ get_topic_terms <-
                               n,
                               method){
       
-      topic_docs <- topic_count %>% filter(doc_topic_occurrences > 0)
+      topic_docs <- topic_count %>% dplyr::filter(doc_topic_occurrences > 0)
       
-      topic_terms <- topics_full %>% filter(topic == (distinct(topic_count, topic) %>% pull()))  %>% select({{terms}}, topic)
+      topic_terms <- topics_full %>% 
+        dplyr::filter(topic == (dplyr::distinct(topic_count, topic) %>% 
+                                  dplyr::pull())) %>% 
+        dplyr::select({{terms}}, topic)
       
-      if ((topic_docs %>% distinct(!!as.name(id)) %>% nrow() > 1) & 
-          (topic_terms %>% distinct(!!as.name(terms)) %>% nrow > 1)) { # make sure we have more than 1 term & more than 1 document
+      if ((topic_docs %>% dplyr::distinct(!!as.name(id)) %>% nrow() > 1) & 
+          (topic_terms %>% dplyr::distinct(!!as.name(terms)) %>% nrow > 1)) { # make sure we have more than 1 term & more than 1 document
         
         
         if (method == "PMI") {
           
           topic_data <- tokens %>% 
-            filter(!!as.name(id) %in% (topic_docs %>% pull({{id}})) &        # only documents associated with the topic
-                     !!as.name(terms) %in% (topic_terms %>% pull({{terms}}))) # only terms from the topics
+            dplyr::filter(!!as.name(id) %in% (topic_docs %>% dplyr::pull({{id}})) &        # only documents associated with the topic
+                     !!as.name(terms) %in% (topic_terms %>% dplyr::pull({{terms}}))) # only terms from the topics
           
           suppressWarnings({ # suppress warnings about deprecated matrix function in pmi calculation
             topic_graph <-
               topic_data %>%
-              select({{ id }}, {{ terms }}) %>%
-              pairwise_pmi_(feature =  {{id}}, item = {{terms}}, sort = F) %>% rename(weight = pmi) %>% # calculate PMI as weight (use pairwise_pmi_() avoid problems with column specification)
-              graph_from_data_frame(directed = F) # make igraph object for slice
+              dplyr::select({{id}}, {{terms}}) %>%
+              widyr::pairwise_pmi_(feature =  {{id}}, item = {{terms}}, sort = F) %>% dplyr::rename(weight = pmi) %>% # calculate PMI as weight (use pairwise_pmi_() avoid problems with column specification)
+              igraph::graph_from_data_frame(directed = F) # make igraph object for slice
           })
           
         } else {
           
           topic_data <- tokens %>% 
-            filter(!!as.name(id) %in% (topic_docs %>% pull({{id}})) &
-                     !!as.name(terms) %in% (topic_terms %>% pull({{terms}}))) %>% 
-            count(!!as.name(id), !!as.name(terms), sort = T) %>% 
-            group_by(!!as.name(terms)) %>% mutate(term_id = cur_group_id()) %>%  # integer IDs for lemmas and docs, as required by projecting_tm
-            group_by(!!as.name(id)) %>% mutate(temp_doc_id = cur_group_id()) %>% ungroup() # these are generated for docs in case they are not coercible to integer (e.g. char IDs)
+            dplyr::filter(!!as.name(id) %in% (topic_docs %>% dplyr::pull({{id}})) &
+                     !!as.name(terms) %in% (topic_terms %>% dplyr::pull({{terms}}))) %>% 
+            dplyr::count(!!as.name(id), !!as.name(terms), sort = T) %>% 
+            dplyr::group_by(!!as.name(terms)) %>% dplyr::mutate(term_id = cur_group_id()) %>%  # integer IDs for lemmas and docs, as required by projecting_tm
+            dplyr::group_by(!!as.name(id)) %>% dplyr::mutate(temp_doc_id = cur_group_id()) %>% # these are generated for docs in case they are not coercible to integer (e.g. char IDs)
+            dplyr::ungroup() 
           
           # project the network with another method (e.g. "Newman")
           topic_graph <- 
-            projecting_tm(topic_data %>% 
-                            select(term_id, temp_doc_id, # order is important here: the first node is the one being projected, i.e. the resulting network
+            tnet::projecting_tm(topic_data %>% 
+                            dplyr::select(term_id, temp_doc_id, # order is important here: the first node is the one being projected, i.e. the resulting network
                                    n), # we weigh the network by the raw count of tokens in a document
                           method = method) %>% 
-            rename(weight = w) %>% 
-            graph_from_data_frame(directed = F)
+            dplyr::rename(weight = w) %>% 
+            igraph::graph_from_data_frame(directed = F)
           
-          V(topic_graph)$name <-        # replace term ID with actual term
-            tibble(term_id = V(topic_graph)$name %>% as.integer()) %>% 
-            left_join(topic_data %>% distinct(!!as.name(terms), term_id), by = "term_id", multiple = "all") %>% 
-            pull({{terms}})
+          igraph::V(topic_graph)$name <-        # replace term ID with actual term
+            tibble::tibble(term_id = igraph::V(topic_graph)$name %>% as.integer()) %>% 
+            dplyr::left_join(topic_data %>% dplyr::distinct(!!as.name(terms), term_id), by = "term_id", multiple = "all") %>% 
+            dplyr::pull({{terms}})
           
         }
         
-        V(topic_graph)$page_rank <- page_rank(topic_graph)$vector
+        igraph::V(topic_graph)$page_rank <- igraph::page_rank(topic_graph)$vector
         
-        top_terms <- tibble({{terms}} := V(topic_graph)$name, 
-                            page_rank = unlist(V(topic_graph)$page_rank)) %>% 
-          slice_max(page_rank, n = n, with_ties = F) %>% 
-          mutate(topic = unique(topic_docs$topic)) 
+        top_terms <- tibble::tibble({{terms}} := igraph::V(topic_graph)$name, 
+                            page_rank = unlist(igraph::V(topic_graph)$page_rank)) %>% 
+          dplyr::slice_max(page_rank, n = n, with_ties = F) %>% 
+          dplyr::mutate(topic = unique(topic_docs$topic)) 
         
         
         
       } else { # if we only have one document or one term, return terms with page_rank 1
         
-        top_terms <- topic_terms %>% distinct(!!as.name(terms)) %>% mutate(page_rank = 1,
-                                                                           topic = unique(topic_docs$topic)) 
+        top_terms <- topic_terms %>% 
+          dplyr::distinct(!!as.name(terms)) %>% 
+          dplyr::mutate(page_rank = 1,
+                        topic = unique(topic_docs$topic)) 
       }
       
       return(top_terms)
       
     }
     
-    possibly_pagerank_terms <- possibly(pagerank_terms, otherwise = NULL) # this is a better solution than try(), as it returns NULL rather than an error message
+    possibly_pagerank_terms <- purrr::possibly(pagerank_terms, otherwise = NULL) # this is a better solution than try(), as it returns NULL rather than an error message
     
     output <- 
       topic_counts_list %>% 
-      future_map(
+      furrr::future_map(
         possibly_pagerank_terms,
         topics_full = topics_full, 
         tokens = tokens,
@@ -390,15 +396,19 @@ get_topic_terms <-
         terms = terms,
         n = n, # number of top documents returned
         method = method) %>% 
-      compact() %>% # this removes the empty entries (i.e. topics without any retrieved documents / errors) defined through possibly() above
-      bind_rows()
+      purrr::compact() %>% # this removes the empty entries (i.e. topics without any retrieved documents / errors) defined through possibly() above
+      dplyr::bind_rows()
     
-    if (topics_counts %>% distinct(topic) %>% 
-         filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% nrow() > 0) {
+    if (topics_counts %>% dplyr::distinct(topic) %>% 
+        dplyr::filter(!(topic %in% (output %>% dplyr::distinct(topic) %>% 
+                                    dplyr::pull()))) %>% nrow() > 0) {
       
-      cat("\n No terms returned for topics", paste(topics_counts %>% distinct(topic) %>% 
-                                                     filter(!(topic %in% (output %>% distinct(topic) %>% pull()))) %>% 
-                                                     pull(), collapse = ", "), "\n\n")
+      cat("\n No terms returned for topics", paste(topics_counts %>% 
+                                                     dplyr::distinct(topic) %>% 
+                                                     dplyr::filter(!(topic %in% (output %>% 
+                                                                                   dplyr::distinct(topic) %>% 
+                                                                                   dplyr::pull()))) %>% 
+                                                     dplyr::pull(), collapse = ", "), "\n\n")
       
     }
 
@@ -417,15 +427,31 @@ make_model_overview <- function(...,                # model objects go here
     model_names <- as.character(models$...)
   }
   model_list = list(...)
-  tibble(
+  tibble::tibble(
     model = model_names,
-    topics = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% distinct(topic) %>% nrow()),
-    topicless_entities = model_list %>% map_dbl(~ .x %>% filter(is.na(topic)) %>% distinct(node) %>% nrow()),
-    topic_entities = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% distinct(node) %>% nrow()),
-    average_entities_per_topic = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% summarise(mean(total_entitites_in_topic)) %>% pull(1)),
-    average_topic_occurence = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% summarise(mean(total_topic_occurrences_global)) %>% pull(1)),
-    average_topics_per_term = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% group_by(node) %>% summarise(topics = n()) %>% ungroup() %>% summarise(mean = mean(topics)) %>% pull(1)),
-    topic_entities_gini = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% distinct(topic, .keep_all = T) %>% pull(total_entitites_in_topic) %>% Gini()),
-    topic_occurence_gini = model_list %>% map_dbl(~ .x %>% filter(!is.na(topic)) %>% distinct(topic, .keep_all = T) %>% pull(total_topic_occurrences_global) %>% Gini())
+    topics = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(!is.na(topic)) %>% 
+                                             dplyr::distinct(topic) %>% nrow()),
+    topicless_entities = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(is.na(topic)) %>% 
+                                                         dplyr::distinct(node) %>% nrow()),
+    topic_entities = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(!is.na(topic)) %>% 
+                                                     dplyr::distinct(node) %>% nrow()),
+    average_entities_per_topic = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(!is.na(topic)) %>% 
+                                                                 dplyr::summarise(mean(total_entitites_in_topic)) %>% 
+                                                                 dplyr::pull(1)),
+    average_topic_occurence = model_list %>% purrr::map_dbl(~ .x %>% filter(!is.na(topic)) %>% 
+                                                              dplyr::summarise(mean(total_topic_occurrences_global)) %>% 
+                                                              dplyr::pull(1)),
+    average_topics_per_term = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(!is.na(topic)) %>% 
+                                                              dplyr::group_by(node) %>% dplyr::summarise(topics = n()) %>%
+                                                              dplyr::ungroup() %>% dplyr::summarise(mean = mean(topics)) %>% 
+                                                              dplyr::pull(1)),
+    topic_entities_gini = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(!is.na(topic)) %>% 
+                                                          dplyr::distinct(topic, .keep_all = T) %>% 
+                                                          dplyr::pull(total_entitites_in_topic) %>% 
+                                                          DescTools::Gini()),
+    topic_occurence_gini = model_list %>% purrr::map_dbl(~ .x %>% dplyr::filter(!is.na(topic)) %>% 
+                                                           dplyr::distinct(topic, .keep_all = T) %>% 
+                                                           dplyr::pull(total_topic_occurrences_global) %>% 
+                                                           DescTools::Gini())
   )
 }

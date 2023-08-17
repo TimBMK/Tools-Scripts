@@ -10,7 +10,8 @@ full_scroll <- function(conn,  # connection to elastic
                         index = NULL,         # Search index
                         size = 10000,         # number of results per Search (result DF size). Balance with list_length. Maximum = 10.000
                         time_scroll = "1h",   # length of scroll id kept alive (see Search() documentation)
-                        limit = NULL) {       # maximum number of results (NULL for unlimited/everything)
+                        limit = NULL,         # maximum number of results (NULL for unlimited/everything)
+                        ...) {                # additional arguments passed to elastic::Search()
   require(progress)
   require(elastic)
   require(data.table)
@@ -18,7 +19,7 @@ full_scroll <- function(conn,  # connection to elastic
   if (!is.null(limit) && limit < size) {size <- limit} # set size of the results per search to limit if needed, so no more than the limit are returned
   
   # initial search, sets query
-  res <- Search(conn, q = q, asdf = T, size = size, body = body, time_scroll = time_scroll, index = index)
+  res <- elastic::Search(conn, q = q, asdf = T, size = size, body = body, time_scroll = time_scroll, index = index, ...)
   
   # limits
   if (is.null(limit)){        
@@ -36,7 +37,7 @@ full_scroll <- function(conn,  # connection to elastic
   } 
   
   # progress bar to track download progress and total time elapsed
-  pb <- progress_bar$new( 
+  pb <- progress::progress_bar$new( 
     format = "  downloading [:bar] :current / :total | :elapsedfull",
     total = total, clear = FALSE, width= 60)
   
@@ -46,23 +47,23 @@ full_scroll <- function(conn,  # connection to elastic
   
   if (is.null(limit)){
     while (hits != 0) {
-      res <- scroll(conn = conn, x = res$`_scroll_id`, asdf = T)
+      res <- elastic::scroll(conn = conn, x = res$`_scroll_id`, asdf = T)
       hits <- length(res$hits$hits)
       if (hits > 0) {
         list[length(list)+1] <- list(res$hits$hits)     # make list of results to bind later
       }
       if (is.null(list_length)) {
         if (hits == 0) {
-          out <- rbindlist(list, fill = T)
+          out <- data.table::rbindlist(list, fill = T)
           list <- list()
         }
       } else {
         if (length(list)==list_length) {                           # bind results every x calls (~10 datapoints per call)
-          out <- rbindlist(c(list(out), list), fill = T)
+          out <- data.table::rbindlist(c(list(out), list), fill = T)
           list <- list()
         }
         if (length(list) <= list_length & hits == 0) {             # bind leftovers
-          out <- rbindlist(c(list(out), list), fill = T)
+          out <- data.table::rbindlist(c(list(out), list), fill = T)
           list <- list()
         }
       }
@@ -75,23 +76,23 @@ full_scroll <- function(conn,  # connection to elastic
   
   if (!is.null(limit)){
     while ((hits != 0) & ((nrow(out)+nrow(res$hits$hits)) < limit)) {
-      res <- scroll(conn = conn, x = res$`_scroll_id`, asdf = T)
+      res <- elastic::scroll(conn = conn, x = res$`_scroll_id`, asdf = T)
       hits <- length(res$hits$hits)
       if (hits > 0) {
         list[length(list)+1] <- list(res$hits$hits)     # make list of results to bind later
       }
       if (is.null(list_length)) {
         if (hits == 0) {
-          out <- rbindlist(list, fill = T)
+          out <- data.table::rbindlist(list, fill = T)
           list <- list()
         }
       } else {
         if (length(list)==list_length) {                           # bind results every x calls (~10 datapoints per call)
-          out <- rbindlist(c(list(out), list), fill = T)
+          out <- data.table::rbindlist(c(list(out), list), fill = T)
           list <- list()
         }
         if (length(list) <= list_length & hits == 0) {             # bind leftovers
-          out <- rbindlist(c(list(out), list), fill = T)
+          out <- data.table::rbindlist(c(list(out), list), fill = T)
           list <- list()
         }
       }
