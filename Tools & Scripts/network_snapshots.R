@@ -121,7 +121,8 @@ snapshots <- function(data,      # a data frame
         slice_dat <- igraph::as_data_frame(slice, what = "edges") %>%
           dplyr::mutate(time = timeframe %>% 
                           dplyr::distinct(!!as.name(time)) %>% 
-                          dplyr::pull())
+                          dplyr::pull()) %>% 
+          dplyr::distinct(from, to, .keep_all = TRUE) # remove duplicated edges (a to b, b to a)
         
       }
       
